@@ -2,7 +2,7 @@
 
 A cooperative party game for 3–8 players. Each person joins a room from their own browser and compares abstract echoes to find the hidden Source.
 
-**[Play Signal](https://signal-party-prash.prashanthreddyloka54.chatgpt.site)** · [GitHub repository](https://github.com/prashanthreddyloka/signal)
+**[Play Signal](https://signal-rust-nine.vercel.app)** · [GitHub repository](https://github.com/prashanthreddyloka/signal)
 
 ## Run locally
 
@@ -38,4 +38,4 @@ node tests/multiplayer.mjs http://localhost:5173
 
 The integration test creates an eight-player room and checks concurrent joins/actions, capacity, host controls, pause/resume, shared spending, stale actions, reconnects, and hidden information. Engine tests check board reachability, hazards, signal bands, timer limits, budget exhaustion, and win precedence.
 
-Sites hosting provisions the DB binding declared in `.openai/hosting.json` and applies the generated Drizzle migration. Build output includes the Worker and its assets. The browser also exposes a read-only WebMCP room tool when supported.
+The Vercel deployment hosts the Next.js interface and same-origin API proxy. The proxy forwards room requests to the authoritative multiplayer service, keeping the map and room state server-side. GitHub `main` is connected to Vercel for automatic redeployments. The browser also exposes a read-only WebMCP room tool when supported.
