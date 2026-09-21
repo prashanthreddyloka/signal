@@ -2,6 +2,8 @@
 
 A cooperative party game for 3–8 players. Each person joins a room from their own browser and compares abstract echoes to find the hidden Source.
 
+**[Play Signal](https://signal-party-prash.prashanthreddyloka54.chatgpt.site)** · [GitHub repository](https://github.com/prashanthreddyloka/signal)
+
 ## Run locally
 
 Use Node 24 (Node 22.13+ is supported by the app). Install with `npm run install:ci`, then `npm run build`. Apply the generated local database migration:
