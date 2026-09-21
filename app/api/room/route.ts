@@ -1,16 +1,18 @@
-import { env } from "cloudflare:workers";
-import { actions,createRoom,player,start,tick,view,type Room,type Action } from "@/lib/game";
-export const dynamic="force-dynamic";
-function db(){if(!env.DB)throw Error("Room service is unavailable. Please try again shortly.");return env.DB.withSession("first-primary");}
-function response(body:unknown,status=200){return Response.json(body,{status,headers:{"Cache-Control":"no-store"}});}
-function tokenFrom(req:Request){const token=req.headers.get("Authorization")?.replace(/^Bearer /,"")??"";if(!/^[a-f0-9-]{36}$/i.test(token))throw Error("Please reconnect from the start screen.");return token;}
-async function access(code:string,token:string,operation:(r:Room,id:string,now:number)=>void){const database=db();for(let attempt=0;attempt<10;attempt++){const row=await database.prepare("SELECT state, revision, expires FROM rooms WHERE code = ?").bind(code).first<{state:string;revision:number;expires:number}>();if(!row||row.expires<Date.now())throw Error("Room not found or expired. Check the code.");const r=JSON.parse(row.state) as Room;const now=Date.now();let p=r.players.find(p=>p.token===token);const before=JSON.stringify(r);tick(r,now);operation(r,p?.id??"",now);p=r.players.find(p=>p.token===token);if(!p)throw Error("Join this room first.");if(now-p.seen>8000)p.seen=now;if(JSON.stringify(r)!==before){const result=await database.prepare("UPDATE rooms SET state = ?, revision = revision + 1 WHERE code = ? AND revision = ?").bind(JSON.stringify(r),code,row.revision).run();if(!result.meta.changes)continue;}return view(r,p.id,now,row.revision+(JSON.stringify(r)!==before?1:0));}throw Error("The room is busy. Please try again.");}
-export async function GET(req:Request){try{const token=tokenFrom(req);const code=new URL(req.url).searchParams.get("code")?.toUpperCase()??"";const state=await access(code,token,(_r,id)=>{if(!id)throw Error("Join this room first.");});return response(state);}catch(e){return response({error:e instanceof Error?e.message:"Connection interrupted. Retry shortly."},400);}}
-export async function POST(req:Request){try{if(req.headers.get("origin")&&new URL(req.headers.get("origin")!).host!==new URL(req.url).host)return response({error:"Invalid origin."},403);const token=tokenFrom(req);if(Number(req.headers.get("content-length")??0)>4096)return response({error:"Request too large."},413);const b=await req.json() as {op:string;name?:string;code?:string;action?:Action;round?:number;game?:number};const name=typeof b.name==="string"?b.name.trim().replace(/[\x00-\x1f]/g,"").slice(0,20):"";if(b.op==="create"){if(!name)throw Error("Enter your callsign first.");const database=db();const existing=await database.prepare("SELECT code, state FROM rooms WHERE code = ?").bind((b.code??"").toUpperCase()).first<{code:string;state:string}>();if(existing){const r=JSON.parse(existing.state)as Room;const p=r.players.find(p=>p.token===token);if(p)return response(view(r,p.id,Date.now()));}for(let i=0;i<5;i++){const alphabet="ABCDEFGHJKLMNPQRSTUVWXYZ";const code=Array.from(crypto.getRandomValues(new Uint8Array(6)),v=>alphabet[v%alphabet.length]).join("");const p=player(token,name,Date.now());const r=createRoom(code,p);const inserted=await database.prepare("INSERT OR IGNORE INTO rooms (code,state,revision,expires) VALUES (?,?,0,?)").bind(code,JSON.stringify(r),Date.now()+86400000).run();if(inserted.meta.changes)return response(view(r,p.id,Date.now()));}throw Error("Could not create a room. Try again.");}
-const code=(b.code??"").toUpperCase();if(!/^[A-Z]{6}$/.test(code))throw Error("Enter the six-letter room code.");const state=await access(code,token,(r,id,now)=>{if(b.op==="join"){if(id)return;if(r.phase!=="lobby")throw Error("This expedition has already started. Ask the host to return to the lobby.");if(r.players.length>=8)throw Error("This room is full.");if(!name)throw Error("Enter your callsign first.");if(r.players.some(p=>p.name.toLowerCase()===name.toLowerCase()))throw Error("That callsign is taken. Choose another.");r.players.push(player(token,name,now));return;}
-if(!id)throw Error("Join this room first.");const p=r.players.find(p=>p.id===id)!;
-if(b.op==="action"){if(r.phase!=="playing"||r.paused)throw Error("The expedition is not accepting actions right now.");if(b.game!==r.game||b.round!==r.round)throw Error("The round changed. Choose your next action.");if(p.arrived)throw Error("You have arrived. Help your team navigate.");if(p.action)throw Error("Your action is already locked in.");if(!actions.includes(b.action!))throw Error("Choose a valid action.");p.action=b.action!;tick(r,now);return;}
-if(b.op==="claim"){const host=r.players.find(p=>p.id===r.host);if(host&&now-host.seen<=60000)throw Error("The host is still connected.");r.host=id;return;}
-if(r.host!==id)throw Error("Only the host can do that.");if(b.op==="start"){if(r.phase!=="lobby")throw Error("The expedition has already started.");start(r,now);}else if(b.op==="pause"){if(r.phase!=="playing")throw Error("There is no active expedition.");if(r.paused){r.paused=false;r.deadline=now+r.remaining;}else{r.remaining=Math.max(0,r.deadline-now);r.paused=true;}}else if(b.op==="lobby"){if(r.phase!=="won"&&r.phase!=="lost")throw Error("Finish this expedition first.");r.phase="lobby";r.players.forEach(p=>{p.arrived=false;p.action=null;p.echoes=[];p.history=[];});}else throw Error("Unknown room command.");});return response(state);
-}catch(e){return response({error:e instanceof Error?e.message:"Room service interrupted. Please retry."},400);}}
+const backend = process.env.SIGNAL_BACKEND_URL ?? "https://signal-party-prash.prashanthreddyloka54.chatgpt.site";
 
+async function proxy(req: Request) {
+  const incoming = new URL(req.url);
+  const target = new URL("/api/room", backend);
+  target.search = incoming.search;
+  const headers = new Headers();
+  for (const name of ["authorization", "content-type"]) {
+    const value = req.headers.get(name);
+    if (value) headers.set(name, value);
+  }
+  const upstream = await fetch(target, { method: req.method, headers, body: req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer(), cache: "no-store" });
+  return new Response(upstream.body, { status: upstream.status, headers: { "content-type": upstream.headers.get("content-type") ?? "application/json", "cache-control": "no-store" } });
+}
+
+export const dynamic = "force-dynamic";
+export async function GET(req: Request) { return proxy(req); }
+export async function POST(req: Request) { return proxy(req); }
